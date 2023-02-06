@@ -29,9 +29,9 @@ class BigramLM(nn.Module):
         loss = F.cross_entropy(logits, y.view(b * t))
         return logits, loss
 
-    def generate(self, x: Tensor, max: int = 1) -> Tensor:
+    def generate(self, x: Tensor, tokens: int = 1) -> Tensor:
         """Take an input (B, T) and sample a new token."""
-        for _ in range(max):
+        for _ in range(tokens):
             # We feed the whole context for generality, though
             # the BigramLM only uses the final token.
             logits, _ = self(x)
