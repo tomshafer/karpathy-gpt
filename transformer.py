@@ -1,4 +1,4 @@
-"""Transformer model."""
+"""Transformer model from Andrej Karpathy's GPT lecture."""
 
 from __future__ import annotations
 

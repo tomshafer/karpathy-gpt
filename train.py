@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-from textwrap import indent
 import time
 from argparse import ArgumentParser
 from dataclasses import dataclass
+from textwrap import indent
 
 import torch
 from torch import Tensor

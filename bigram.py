@@ -1,4 +1,4 @@
-"""BigramLM from Anrej Karpathy's GPT lecture."""
+"""BigramLM from Andrej Karpathy's GPT lecture."""
 
 from argparse import ArgumentParser, Namespace
 from typing import List, Optional, Tuple
