@@ -1,6 +1,9 @@
+"""Main training script."""
+
 from __future__ import annotations
 
 import logging
+from textwrap import indent
 import time
 from argparse import ArgumentParser
 from dataclasses import dataclass
@@ -51,7 +54,7 @@ class timer:
         log.info(f"Finshed in {end - self.start:.5f} sec")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class CLI:
     file: str
     batch_size: int
@@ -66,6 +69,10 @@ class CLI:
     cuda: bool
     eval_cadence: int
     eval_samples: int
+
+    def __repr__(self) -> str:
+        pars = "\n".join(f"  {k} = {v}" for k, v in vars(self).items())
+        return indent("\nParameters:\n" + pars, prefix="    ")
 
     @classmethod
     def from_args(cls):
@@ -118,8 +125,13 @@ def train_model() -> None:
     log.info(f"Model has {np_:,} parameters")
 
     device = torch.device("cuda" if args.cuda else "cpu")
-    model = model.to(device)
+    log.info(f"Using device '{device}'")
+
     data = data.to(device)
+    trn = trn.to(device)
+    val = val.to(device)
+
+    model = model.to(device)
     optim = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
     with timer():
@@ -137,9 +149,9 @@ def train_model() -> None:
                 model.eval()
                 ddict = {"train": trn, "val": val}
                 for part in ddict:
-                    losses = torch.zeros(args.eval_samples)
+                    losses = torch.zeros(args.eval_samples, device=device)
                     for k in range(args.eval_samples):
-                        bargs_ = (ddict[part], args.context_size, args.batch_size)
+                        bargs_ = (ddict[part], args.context_size, 1)
                         x, y = random_batch(*bargs_)
                         _, losses[k] = model(x, y)
                     msg += f"{part.capitalize()} loss = {losses.mean():.5f}  "
@@ -147,7 +159,7 @@ def train_model() -> None:
                 model.train()
 
     # Generate some text
-    prompt = torch.zeros((1, 1), dtype=torch.long)
+    prompt = torch.zeros((1, 1), dtype=torch.long, device=device)
     print(decode(model.generate(prompt, 2000)[0].tolist(), vocab))  # type: ignore
 
 

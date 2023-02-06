@@ -41,7 +41,7 @@ class TransformerLM(nn.Module):
         B, T = x.shape
 
         token_embedding = self.token_embedding(x)
-        position_embedding = self.position_embedding(torch.arange(T))
+        position_embedding = self.position_embedding(torch.arange(T, device=x.device))
 
         z = self.blocks(token_embedding + position_embedding)
         z = self.feedforward(z)

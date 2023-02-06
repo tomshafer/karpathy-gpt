@@ -1,7 +1,7 @@
 """BigramLM from Anrej Karpathy's GPT lecture."""
 
 from argparse import ArgumentParser, Namespace
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import torch
 from torch import Tensor, nn
@@ -19,7 +19,7 @@ class BigramLM(nn.Module):
         super().__init__()
         self.embeddings = nn.Embedding(vocab_size, vocab_size)
 
-    def forward(self, x: Tensor, y: OTensor = None) -> tuple[Tensor, OTensor]:
+    def forward(self, x: Tensor, y: OTensor = None) -> Tuple[Tensor, OTensor]:
         """Make a prediction of the next token given the current."""
         logits = self.embeddings(x)  # shape: (batch, time, vocab)
         if y is None:
@@ -41,7 +41,7 @@ class BigramLM(nn.Module):
         return x
 
 
-def batch(t: torch.Tensor, batch_size: int, block_size: int) -> tuple[Tensor, Tensor]:
+def batch(t: torch.Tensor, batch_size: int, block_size: int) -> Tuple[Tensor, Tensor]:
     ix = torch.randint(len(t) - block_size, (batch_size,))
     x = torch.stack([t[i : i + block_size] for i in ix])
     y = torch.stack([t[i + 1 : i + 1 + block_size] for i in ix])
@@ -70,16 +70,16 @@ def read_text(path: str) -> str:
     return text
 
 
-def tokenize(text: str) -> list[str]:
+def tokenize(text: str) -> List[str]:
     return sorted(set(text))
 
 
-def encode(text: str, vocab: list[str]) -> list[int]:
+def encode(text: str, vocab: List[str]) -> List[int]:
     stoi = {c: i for i, c in enumerate(vocab)}
     return [stoi[c] for c in text]
 
 
-def decode(ints: list[int], vocab: list[str]) -> str:
+def decode(ints: List[int], vocab: List[str]) -> str:
     itos = {i: c for i, c in enumerate(vocab)}
     return "".join([itos[n] for n in ints])
 
