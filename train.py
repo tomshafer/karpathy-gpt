@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from argparse import ArgumentParser
-from dataclasses import dataclass
+from datetime import datetime
 from textwrap import indent
 
 import torch
 from torch import Tensor
 from torch.nn import Module
+from yacs.config import CfgNode as CN
 
 from bigram import BigramLM
 from transformer import TransformerLM
@@ -22,6 +24,17 @@ logging.basicConfig(
 )
 
 log = logging.getLogger(__name__)
+
+
+def setup_logging(cfg: CN, lh: logging.Logger) -> None:
+    # Add a file handler for archival
+    dest = f"log-{datetime.now().isoformat().replace(':', '')}.txt"
+    dest = os.path.join(cfg.RUN.OUTPUT_DIR, dest)
+    lh.info(f"Logging to {dest}")
+
+    h = logging.FileHandler(dest)
+    h.setFormatter(logging.getLogger().handlers[0].formatter)
+    lh.addHandler(h)
 
 
 def encode(text: str, vocab: list[str]) -> list[int]:
@@ -54,50 +67,51 @@ class timer:
         log.info(f"Finshed in {end - self.start:.5f} sec")
 
 
-@dataclass(frozen=True, repr=False)
-class CLI:
-    file: str
-    batch_size: int
-    context_size: int
-    embedding_size: int
-    num_heads: int
-    num_blocks: int
-    dropout: float
-    iter: int
-    model: str
-    learning_rate: float
-    cuda: bool
-    eval_cadence: int
-    eval_samples: int
+# Model config
+_C = CN()
 
-    def __repr__(self) -> str:
-        pars = "\n".join(f"  {k} = {v}" for k, v in vars(self).items())
-        return indent("\nParameters:\n" + pars, prefix="    ")
+_C.RUN = CN()
+_C.RUN.DATA = None
+_C.RUN.OUTPUT_DIR = "."
+_C.RUN.CUDA = False
 
-    @classmethod
-    def from_args(cls):
-        p = ArgumentParser()
-        p.add_argument("--batch-size", type=int, default=64)
-        p.add_argument("--context-size", type=int, default=256)
-        p.add_argument("--embedding-size", type=int, default=384)
-        p.add_argument("--num-heads", type=int, default=6)
-        p.add_argument("--num-blocks", type=int, default=6)
-        p.add_argument("--dropout", type=float, default=0.2)
-        p.add_argument("--model", type=str, default="Transformer")
-        p.add_argument("--iter", type=int, default=5000)
-        p.add_argument("--lr", dest="learning_rate", type=float, default=1e-3)
-        p.add_argument("--cuda", action="store_true")
-        p.add_argument("--eval-cadence", type=int, default=500)
-        p.add_argument("--eval-samples", type=int, default=200)
-        p.add_argument("file", metavar="FILE", type=str, help="source text file")
-        return cls(**vars(p.parse_args()))
+_C.MODEL = CN()
+_C.MODEL.CLASS = "Transformer"
+_C.MODEL.PARAMS = CN()
+_C.MODEL.PARAMS.CONTEXT_SIZE = 256
+_C.MODEL.PARAMS.EMBEDDING_SIZE = 384
+_C.MODEL.PARAMS.NUM_HEADS = 6
+_C.MODEL.PARAMS.NUM_BLOCKS = 6
+_C.MODEL.PARAMS.DROPOUT_RATIO = 0.2
+
+_C.TRAIN = CN()
+_C.TRAIN.BATCH_SIZE = 64
+_C.TRAIN.NUM_ITERS = None
+_C.TRAIN.LEARNING_RATE = 1e-3
+_C.TRAIN.CHECKPOINT_ITERS = None
+
+_C.EVAL = CN()
+_C.EVAL.CADENCE_ITERS = 500
+_C.EVAL.NUM_SAMPLES = 200
+_C.EVAL.GENERATION_ITERS = None
+_C.EVAL.GENERATION_SIZE = 2000
+
+
+def cfg_from_cli() -> CN:
+    """Bring in configs from file."""
+    p = ArgumentParser()
+    p.add_argument("cfg_file", metavar="CONFIG_YAML")
+    cfg = _C.clone()
+    cfg.merge_from_file(p.parse_args().cfg_file)
+    return cfg
 
 
 def train_model() -> None:
-    args = CLI.from_args()
-    log.info(args)
+    C = cfg_from_cli()
+    setup_logging(C, log)
+    log.info("Configuration:\n" + indent(str(C), 4 * " "))
 
-    with open(args.file) as f:
+    with open(C.RUN.DATA) as f:
         text = f.read()
 
     vocab = sorted(set(text))
@@ -108,35 +122,35 @@ def train_model() -> None:
     trn, val = data[:nsplit], data[nsplit:]
     log.info(f"Train size = {len(trn):,}  Val size = {len(val):,}")
 
-    if args.model.lower().startswith("bigram"):
+    if C.MODEL.CLASS.lower().startswith("bigram"):
         model: Module = BigramLM(len(vocab))
-    elif args.model.lower().startswith("transformer"):
+    elif C.MODEL.CLASS.lower().startswith("transformer"):
         model = TransformerLM(
             len(vocab),
-            args.context_size,
-            args.embedding_size,
-            args.embedding_size // args.num_heads,
-            args.num_blocks,
+            C.MODEL.PARAMS.CONTEXT_SIZE,
+            C.MODEL.PARAMS.EMBEDDING_SIZE,
+            C.MODEL.PARAMS.EMBEDDING_SIZE // C.MODEL.PARAMS.NUM_HEADS,
+            C.MODEL.PARAMS.NUM_BLOCKS,
         )
     else:
-        raise ValueError(f"unrecognized model type: '{args.model}'")
+        raise ValueError(f"unrecognized model type: '{C.MODEL.CLASS}'")
 
     np_ = sum(p.numel() for p in model.parameters() if p.requires_grad)
     log.info(f"Model has {np_:,} parameters")
 
-    device = torch.device("cuda" if args.cuda else "cpu")
-    log.info(f"Using device '{device}'")
+    DEV = torch.device("cuda" if C.RUN.CUDA else "cpu")
+    log.info(f"Using device '{DEV}'")
 
-    data = data.to(device)
-    trn = trn.to(device)
-    val = val.to(device)
+    data = data.to(DEV)
+    trn = trn.to(DEV)
+    val = val.to(DEV)
 
-    model = model.to(device)
-    optim = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+    model = model.to(DEV)
+    optim = torch.optim.Adam(model.parameters(), lr=C.TRAIN.LEARNING_RATE)
 
     with timer():
-        for it in range(args.iter):
-            x, y = random_batch(data, args.context_size, args.batch_size)
+        for it in range(C.TRAIN.NUM_ITERS):
+            x, y = random_batch(data, C.MODEL.PARAMS.CONTEXT_SIZE, C.TRAIN.BATCH_SIZE)
             _, losses = model(x, y)
 
             optim.zero_grad(set_to_none=True)
@@ -144,23 +158,49 @@ def train_model() -> None:
             optim.step()
 
             # Estimate the loss regularly
-            if (it + 1) % args.eval_cadence == 0:
+            if (it + 1) % C.EVAL.CADENCE_ITERS == 0:
                 msg = f"Iter {it+1:05d}: "
                 model.eval()
                 ddict = {"train": trn, "val": val}
                 for part in ddict:
-                    losses = torch.zeros(args.eval_samples, device=device)
-                    for k in range(args.eval_samples):
-                        bargs_ = (ddict[part], args.context_size, 1)
+                    losses = torch.zeros(C.EVAL.NUM_SAMPLES, device=DEV)
+                    for k in range(C.EVAL.NUM_SAMPLES):
+                        bargs_ = (ddict[part], C.MODEL.PARAMS.CONTEXT_SIZE, 1)
                         x, y = random_batch(*bargs_)
                         _, losses[k] = model(x, y)
                     msg += f"{part.capitalize()} loss = {losses.mean():.5f}  "
                 log.info(msg.rstrip())
                 model.train()
 
+            # Checkpoint the model
+            if (it + 1) % C.TRAIN.CHECKPOINT_ITERS == 0:
+                log.info(f"Iter {it+1:05d}: Checkpointing model")
+                torch.save(
+                    obj={
+                        "model_state_dict": model.state_dict(),
+                        "optimizer_state_dict": optim.state_dict(),
+                        "loss": losses.mean().item(),
+                    },
+                    f=os.path.join(C.RUN.OUTPUT_DIR, f"model_{it+1:06d}.pt"),
+                )
+
+            # Generate text
+            if (it + 1) % C.EVAL.GENERATION_ITERS == 0:
+                log.info(f"Iter {it+1:05d}: Generating output")
+                p = os.path.join(C.RUN.OUTPUT_DIR, f"generated_text_{it+1:06d}.txt")
+                with open(p, "w") as f:
+                    with torch.no_grad():
+                        model.eval()
+                        with timer():
+                            prompt = torch.zeros((1, 1), dtype=torch.long, device=DEV)
+                            seq = model.generate(prompt, C.EVAL.GENERATION_SIZE)  # type: ignore[operator]
+                            f.write(decode(seq[0].tolist(), vocab))
+                        model.train()
+
     # Generate some text
-    prompt = torch.zeros((1, 1), dtype=torch.long, device=device)
-    print(decode(model.generate(prompt, 2000)[0].tolist(), vocab))  # type: ignore
+    prompt = torch.zeros((1, 1), dtype=torch.long, device=DEV)
+    seq = model.generate(prompt, 10 * C.EVAL.GENERATION_SIZE)  # type: ignore[operator]
+    print(decode(seq[0].tolist(), vocab))
 
 
 if __name__ == "__main__":
