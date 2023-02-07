@@ -93,7 +93,7 @@ _C.TRAIN.CHECKPOINT_ITERS = None
 _C.EVAL = CN()
 _C.EVAL.CADENCE_ITERS = 500
 _C.EVAL.NUM_SAMPLES = 200
-_C.EVAL.GENERATION_ITERS = None
+_C.EVAL.GENERATION_ITERS = []
 _C.EVAL.GENERATION_SIZE = 2000
 
 
@@ -185,7 +185,7 @@ def train_model() -> None:
                 )
 
             # Generate text
-            if (it + 1) % C.EVAL.GENERATION_ITERS == 0:
+            if (it + 1) in C.EVAL.GENERATION_ITERS:
                 log.info(f"Iter {it+1:05d}: Generating output")
                 p = os.path.join(C.RUN.OUTPUT_DIR, f"generated_text_{it+1:06d}.txt")
                 with open(p, "w") as f:
