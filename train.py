@@ -88,6 +88,7 @@ _C.TRAIN = CN()
 _C.TRAIN.BATCH_SIZE = 64
 _C.TRAIN.NUM_ITERS = None
 _C.TRAIN.LEARNING_RATE = 1e-3
+_C.TRAIN.LR_SCHEDULE = False
 _C.TRAIN.CHECKPOINT_ITERS = None
 
 _C.EVAL = CN()
@@ -146,43 +147,63 @@ def train_model() -> None:
     val = val.to(DEV)
 
     model = model.to(DEV)
-    optim = torch.optim.Adam(model.parameters(), lr=C.TRAIN.LEARNING_RATE)
+    scheduler = None
+    optimizer = torch.optim.Adam(model.parameters(), lr=C.TRAIN.LEARNING_RATE)
+
+    if C.TRAIN.LR_SCHEDULE:
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer, total_steps=C.TRAIN.NUM_ITERS, max_lr=C.TRAIN.LEARNING_RATE
+        )
+        log.info(f"Using LR scheduler: {scheduler.__class__.__name__}")
 
     with timer():
         for it in range(C.TRAIN.NUM_ITERS):
             x, y = random_batch(data, C.MODEL.PARAMS.CONTEXT_SIZE, C.TRAIN.BATCH_SIZE)
             _, losses = model(x, y)
 
-            optim.zero_grad(set_to_none=True)
+            optimizer.zero_grad(set_to_none=True)
             losses.backward()
-            optim.step()
+
+            optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
 
             # Estimate the loss regularly
             if (it + 1) % C.EVAL.CADENCE_ITERS == 0:
-                msg = f"Iter {it+1:05d}: "
-                model.eval()
-                ddict = {"train": trn, "val": val}
-                for part in ddict:
-                    losses = torch.zeros(C.EVAL.NUM_SAMPLES, device=DEV)
-                    for k in range(C.EVAL.NUM_SAMPLES):
-                        bargs_ = (ddict[part], C.MODEL.PARAMS.CONTEXT_SIZE, 1)
-                        x, y = random_batch(*bargs_)
-                        _, losses[k] = model(x, y)
-                    msg += f"{part.capitalize()} loss = {losses.mean():.5f}  "
-                log.info(msg.rstrip())
-                model.train()
+                lr_ = C.TRAIN.LEARNING_RATE
+                if scheduler is not None:
+                    lr_ = scheduler.get_last_lr()[-1]
+                with torch.no_grad():
+                    model.eval()
+                    msg = f"Iter {it+1:05d} (lr={lr_:0.05f}): "
+                    ddict = {"train": trn, "val": val}
+                    for part in ddict:
+                        losses = torch.zeros(C.EVAL.NUM_SAMPLES, device=DEV)
+                        for k in range(C.EVAL.NUM_SAMPLES):
+                            bargs_ = (ddict[part], C.MODEL.PARAMS.CONTEXT_SIZE, 1)
+                            x, y = random_batch(*bargs_)
+                            _, losses[k] = model(x, y)
+                        msg += f"{part.capitalize()} loss = {losses.mean():.5f}  "
+                    log.info(msg.rstrip())
+                    model.train()
 
             # Checkpoint the model
-            if (it + 1) % C.TRAIN.CHECKPOINT_ITERS == 0:
-                log.info(f"Iter {it+1:05d}: Checkpointing model")
-                torch.save(
-                    obj={
+            if C.TRAIN.CHECKPOINT_ITERS and (it + 1) % C.TRAIN.CHECKPOINT_ITERS == 0:
+                model.eval()
+                with torch.no_grad():
+                    log.info(f"Iter {it+1:05d}: Checkpointing model")
+                    state_dict = {
                         "model_state_dict": model.state_dict(),
-                        "optimizer_state_dict": optim.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "scheduler_state_dict": None,
                         "loss": losses.mean().item(),
-                    },
-                    f=os.path.join(C.RUN.OUTPUT_DIR, f"model_{it+1:06d}.pt"),
-                )
+                    }
+                    if scheduler is not None:
+                        state_dict["scheduler_state_dict"] = scheduler.state_dict()
+
+                    dest = os.path.join(C.RUN.OUTPUT_DIR, f"model_{it+1:06d}.pt")
+                    torch.save(obj=state_dict, f=dest)
+                model.train()
 
             # Generate text
             if (it + 1) in C.EVAL.GENERATION_ITERS:
@@ -199,8 +220,8 @@ def train_model() -> None:
 
     # Generate some text
     prompt = torch.zeros((1, 1), dtype=torch.long, device=DEV)
-    seq = model.generate(prompt, 10 * C.EVAL.GENERATION_SIZE)  # type: ignore[operator]
-    print(decode(seq[0].tolist(), vocab))
+    seq = model.generate(prompt, 5 * C.EVAL.GENERATION_SIZE)  # type: ignore[operator]
+    log.info("Final generated text:\n" + decode(seq[0].tolist(), vocab))
 
 
 if __name__ == "__main__":

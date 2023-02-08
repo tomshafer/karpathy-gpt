@@ -1,0 +1,38 @@
+RUN:
+  DATA: shakespeare.txt
+  CUDA: yes
+  OUTPUT_DIR: ./100k
+MODEL:
+  CLASS: Transformer
+  PARAMS:
+    CONTEXT_SIZE: 256
+    EMBEDDING_SIZE: 384
+    NUM_HEADS: 6
+    NUM_BLOCKS: 6
+    DROPOUT_RATIO: 0.2
+TRAIN:
+  NUM_ITERS: 100000
+  LEARNING_RATE: 1e-3
+  LR_SCHEDULE: no
+  BATCH_SIZE: 64
+  CHECKPOINT_ITERS: 5000
+EVAL:
+  CADENCE_ITERS: 250
+  NUM_SAMPLES: 50
+  GENERATION_ITERS:
+    [
+      1000,
+      2000,
+      5000,
+      10000,
+      20000,
+      30000,
+      40000,
+      50000,
+      60000,
+      70000,
+      80000,
+      90000,
+      100000,
+    ]
+  GENERATION_SIZE: 2000

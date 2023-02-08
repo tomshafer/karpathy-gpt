@@ -1,7 +1,7 @@
 RUN:
   DATA: shakespeare.txt
   CUDA: yes
-  OUTPUT_DIR: ./25000
+  OUTPUT_DIR: ./25k
 MODEL:
   CLASS: Transformer
   PARAMS:
